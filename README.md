@@ -41,8 +41,8 @@ the way back:
   to accidentally corrupt.
 
 No database changes. No CMS-specific code — this operates purely on HTTP,
-so it should work for any CMS with this problem, not just WordPress
-(not yet verified against anything but WordPress — see Limitations).
+so it works for any CMS with this problem, not just WordPress (verified
+against WordPress and TYPO3 so far — see Limitations).
 
 This was explored as an alternative to Traefik middleware: `ddev share`
 traffic doesn't currently touch Traefik at all, and getting body-rewriting
@@ -70,6 +70,19 @@ Verified end-to-end against a real WordPress project over a live
 - `wp_options.siteurl` / `home` confirmed untouched before, during, and
   after — no database writes happen at any point.
 
+Also verified end-to-end against a fresh TYPO3 (v14, base distribution)
+project over a live `trycloudflare.com` tunnel:
+
+- Homepage `<link rel="canonical">` and the TYPO3 backend login page
+  (`/typo3/`) both came back with zero leaked local-host references.
+- The site's base URL (`typo3conf` site configuration, set to
+  `https://project.ddev.site/`) confirmed untouched before, during, and
+  after.
+- No proxy code changes were needed to support TYPO3 — same binary, same
+  provider script, different CMS, different templating engine (Fluid) and
+  different config storage (YAML site config vs. WordPress's `wp_options`
+  table).
+
 ### Limitations
 
 - **Content saved *through* the tunnel persists tunnel URLs to the
@@ -79,10 +92,13 @@ Verified end-to-end against a real WordPress project over a live
   view/test-only, not an editing surface — same boundary the
   `wp search-replace` workaround has today.
 - WebSocket payloads are not rewritten.
-- Only tested live against WordPress + cloudflared so far. The mechanism
-  should be CMS-agnostic (pure HTTP layer) and tunnel-agnostic (ngrok
-  forwards the public Host header by default, same as cloudflared), but
-  neither claim has been verified yet.
+- Verified against WordPress and TYPO3 so far, both over cloudflared.
+  Magento 2 — the other CMS DDEV's own docs call out for this exact
+  problem — is still untested; it requires a Magento Marketplace account
+  and Composer auth keys to install at all, which blocked testing it here.
+- Tunnel-agnostic in principle (ngrok forwards the public Host header by
+  default, same as cloudflared), but only cloudflared has actually been
+  tested live.
 - No automated integration test yet — the results above were driven
   manually against a real project and a real tunnel.
 - Not yet wired up as a bundled DDEV share provider — currently a

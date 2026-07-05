@@ -4,6 +4,13 @@ A small Go reverse proxy that makes `ddev share` fully browsable for CMSes
 that bake a single base URL into stored config (WordPress, Magento 2, ...).
 Proof of concept for a possible DDEV share provider.
 
+> **Disclaimer:** I'm not an experienced developer — this was vibe-coded
+> with Claude. It's been tested thoroughly end-to-end (see Status below),
+> but the code itself hasn't been reviewed by anyone with real Go or
+> security experience. Please don't treat this as review-ready; it needs
+> that kind of review before it should be taken seriously as a
+> contribution.
+
 ## The problem
 
 `ddev share` tunnels traffic straight to the project's web container,

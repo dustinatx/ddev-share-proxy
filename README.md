@@ -80,10 +80,8 @@ Notes from getting it working:
 - Plugins are Yaegi-interpreted **source**, version-pinned and fetched from
   `plugins.traefik.io` at router startup — a much smaller trust gap than
   the dynamically-compiled Caddy binary the earlier prototype used, though
-  still a runtime third-party fetch. If this were bundled, DDEV could
-  vendor the plugin source and load it as a Traefik
-  [local plugin](https://plugins.traefik.io/install) to remove the runtime
-  fetch entirely.
+  still a runtime third-party fetch (see "If bundled into DDEV core" below
+  for how that gap could be closed).
 
 ## Variant 2: standalone Go proxy
 
@@ -262,14 +260,49 @@ Copy `share-providers/cloudflared-rewrite.sh` into your project's
 ddev share --provider=cloudflared-rewrite
 ```
 
+## If bundled into DDEV core
+
+Both variants currently carry costs that come from being standalone
+scripts rather than from the approach itself. If maintainers wanted to
+bundle this, the pieces would likely shift as follows (a sketch for
+discussion, not a design):
+
+**Variant 1:**
+
+- The plugin registration would move into DDEV's default router static
+  config, so the one-time setup step (copy a file, `ddev poweroff` +
+  `ddev start`) disappears for users — the router restart happens
+  naturally with the DDEV upgrade that ships it. Registering a plugin
+  only loads its code; it does nothing until a route references it, so
+  this shouldn't affect non-sharing users.
+- The plugin source could be vendored into the router image and loaded
+  as Traefik [local plugins](https://plugins.traefik.io/install),
+  removing the runtime fetch from `plugins.traefik.io` entirely — no
+  third-party code fetched at router startup, and the vendored source
+  is reviewable and pinned in-tree.
+- The provider script's dynamic-config push (`docker cp` into the
+  router's watched directory) would become Go code inside `ddev`
+  itself, which also fixes the stale-route-file limitation above: ddev
+  would own the route's lifecycle instead of a bash `EXIT` trap hoping
+  a signal reaches it.
+
+**Variant 2:** the proxy code would work as-is; the main open question
+is packaging (companion binary vs. hidden subcommand — see below),
+which means building and shipping a binary per platform either way.
+
+Net effect on the comparison: bundled, Variant 1 becomes zero-setup
+with no new binary to ship. As standalone scripts the friction runs the
+other way — Variant 2 works today with nothing but `go build`, while
+Variant 1 needs the static-config step and a router restart.
+
 ## Design questions for discussion
 
 - Which variant? Router-based keeps everything inside `ddev-router` with
-  no new binary, at the cost of two third-party Yaegi plugins (vendorable
-  as local plugins if bundled) and a required router restart when first
-  enabled. The Go proxy is stdlib-only and router-independent (works with
-  `router: none` projects) but is a new binary to build, ship, and
-  maintain.
+  no new binary, at the cost of two third-party Yaegi plugins and (as a
+  standalone script) a required router restart when first enabled; both
+  costs shrink if bundled (see above). The Go proxy is stdlib-only and
+  router-independent (works with `router: none` projects) but is a new
+  binary to build, ship, and maintain.
 - Should this be a distinctly-named provider or a flag on the existing
   built-in providers?
 - If the Go-proxy variant: standalone companion binary (mirroring

@@ -34,6 +34,26 @@ DDEV's documented workaround is to temporarily rewrite the database
 it's a real database mutation with a backup/restore dance around every
 share session, and it's WordPress-specific.
 
+## If you only need this for WordPress
+
+[ddev-share-helper-for-wp](https://github.com/dustinatx/ddev-share-helper-for-wp)
+is a purpose-built DDEV add-on that solves this natively as a WordPress
+plugin, rather than sitting in front of HTTP traffic as a proxy. Instead of
+pattern-matching URLs in response bytes, it hooks WordPress's own
+URL-generation filters directly (`option_home`, `option_siteurl`,
+`script_loader_src`, `get_rest_url`, and 40+ others) at `PHP_INT_MAX`
+priority, so URLs come out correct at the source. That also lets it safely
+handle cases the two variants below can't touch: serialized post metadata,
+JSON-escaped URLs inside inline `<script>` blocks, and `srcset` attributes.
+It also reverse-swaps tunnel URLs back to the local domain before anything
+is saved to the database — closing this repo's "content saved through the
+tunnel persists tunnel URLs" limitation (see below), at least for
+WordPress.
+
+The two variants in this repo remain the better fit for other CMSes
+(TYPO3, Drupal, ...) or if you'd rather not install a plugin, but for
+WordPress-only use the add-on above is likely the stronger choice.
+
 ## Variant 1: rewriting through ddev-router (Traefik)
 
 ```

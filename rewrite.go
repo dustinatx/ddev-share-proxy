@@ -24,7 +24,8 @@ func isRewritableContentType(contentType string) bool {
 		mediaType == "application/xml",
 		mediaType == "application/rss+xml",
 		mediaType == "application/atom+xml",
-		mediaType == "application/manifest+json":
+		mediaType == "application/manifest+json",
+		mediaType == "application/vnd.api+json":
 		return true
 	}
 

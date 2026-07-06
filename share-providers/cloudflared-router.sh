@@ -156,6 +156,7 @@ http:
               - application/rss+xml
               - application/atom+xml
               - application/manifest+json
+              - application/vnd.api+json
           rewrites:
             - regex: '${local_re}'
               replacement: '${tunnel_host}'

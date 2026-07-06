@@ -176,6 +176,31 @@ distribution) project over a live `trycloudflare.com` tunnel:
   different config storage (YAML site config vs. WordPress's `wp_options`
   table).
 
+Both variants also verified end-to-end against a fresh Drupal 11 project
+over a live `trycloudflare.com` tunnel:
+
+- Homepage, a node page (`<link rel="canonical">` and `<link
+  rel="shortlink">`), and `/rss.xml` all came back with zero leaked
+  local-host references.
+- Browser-style gzip requests came back gzip-encoded, byte-identical to an
+  uncompressed fetch once decompressed.
+- A static aggregated CSS asset passed through byte-identical to a direct
+  local fetch.
+- `$base_url` / the current request's `getSchemeAndHttpHost()` confirmed
+  untouched before, during, and after; normal local routing unaffected
+  while the share route was live. Drupal doesn't persist a base URL in the
+  database at all (unlike WordPress's `siteurl`/`home` or TYPO3's
+  `config.yaml`), so there isn't even a `wp search-replace`-style workaround
+  to compare against for Drupal today — either variant is a strict
+  improvement over the status quo.
+- Found and fixed a real gap: the JSON:API module (`/jsonapi/...`) responds
+  with `application/vnd.api+json`, which was missing from both variants'
+  rewritable-content-type allowlists (`monitoring.types` in the Traefik
+  config for Variant 1, `isRewritableContentType` in `rewrite.go` for
+  Variant 2). WordPress's `wp-json` uses plain `application/json`, so this
+  never surfaced in the WP/TYPO3 testing above. Fixed in both places;
+  re-verified zero leaks in JSON:API responses afterward.
+
 ### Limitations
 
 - **Content saved *through* the tunnel persists tunnel URLs to the
@@ -193,8 +218,8 @@ distribution) project over a live `trycloudflare.com` tunnel:
   reaching it, the pushed route file can linger in the router until the
   next share (the script removes stale files on startup, and a route for a
   dead tunnel hostname is unreachable anyway).
-- Variant 1 and Variant 2 have both now been tested against WordPress and
-  TYPO3. Both over cloudflared only.
+- Variant 1 and Variant 2 have both now been tested against WordPress,
+  TYPO3, and Drupal 11. All over cloudflared only.
 - Magento 2 — the other CMS DDEV's own docs call out for this exact
   problem — is still untested; it requires a Magento Marketplace account
   and Composer auth keys to install at all, which blocked testing it here.

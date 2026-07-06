@@ -77,6 +77,7 @@ func TestIsRewritableContentType(t *testing.T) {
 		"application/json",
 		"application/javascript",
 		"application/rss+xml; charset=UTF-8",
+		"application/vnd.api+json",
 		"text/css",
 	}
 	for _, ct := range rewritable {

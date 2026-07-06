@@ -1,8 +1,16 @@
 # ddev-share-proxy
 
-A small Go reverse proxy that makes `ddev share` fully browsable for CMSes
-that bake a single base URL into stored config (WordPress, Magento 2, ...).
-Proof of concept for a possible DDEV share provider.
+Proofs of concept for making `ddev share` fully browsable for CMSes that
+bake a single base URL into stored config (WordPress, Magento 2, ...).
+
+Two working variants, both verified end-to-end over live tunnels:
+
+1. **Router-based** (`share-providers/cloudflared-router.sh`): routes the
+   tunnel through `ddev-router` itself, using Traefik rewrite plugins — no
+   extra binary, no extra container.
+2. **Standalone Go proxy** (`share-providers/cloudflared-rewrite.sh` +
+   the Go code in this repo): a small stdlib-only reverse proxy between the
+   tunnel and the web container.
 
 > **Disclaimer:** I'm not an experienced developer — this was vibe-coded
 > with Claude. It's been tested thoroughly end-to-end (see Status below),
@@ -26,7 +34,58 @@ DDEV's documented workaround is to temporarily rewrite the database
 it's a real database mutation with a backup/restore dance around every
 share session, and it's WordPress-specific.
 
-## This approach
+## Variant 1: rewriting through ddev-router (Traefik)
+
+```
+cloudflared -> ddev-router (Traefik rewrite middlewares) -> web container
+```
+
+This is the "use the router, no other code" approach. It has two pieces:
+
+**One-time static config** (`traefik/static_config.share-rewrite.yaml`,
+copied to `~/.ddev/traefik/`): registers two plugins from the Traefik
+catalog — [`packruler/rewrite-body`](https://github.com/packruler/rewrite-body)
+for response bodies and
+[`XciD/traefik-plugin-rewrite-headers`](https://github.com/XciD/traefik-plugin-rewrite-headers)
+for the `Location` header. This uses DDEV's existing, documented
+`static_config.*.yaml` merge mechanism. Plugins are static config in
+Traefik, so this needs one router restart (`ddev poweroff` + `ddev start`).
+
+**Per-share dynamic config** (pushed by the provider script): once the
+tunnel URL is known, the script generates a Traefik dynamic-config file —
+a router rule matching the tunnel hostname on the HTTPS entrypoint, a
+service pointing at the project's web container, a `customRequestHeaders`
+middleware restoring the project's local `Host` header upstream, and the
+two rewrite middlewares — and `docker cp`s it into
+`/mnt/ddev-global-cache/traefik/config/`. The router's file provider has
+`watch: true`, so the route goes live in about a second with **no router
+restart**, and is removed when the share ends.
+
+cloudflared targets the router's HTTPS entrypoint (`--no-tls-verify`, since
+the router serves the project's local cert), which keeps
+`X-Forwarded-Proto: https` correct without any header games — otherwise
+CMSes that force HTTPS redirect-loop.
+
+Notes from getting it working:
+
+- `rewrite-body` gates on the *request's* `Accept` header against its
+  `monitoring.types` list (substring match, no wildcard support). Plain
+  `curl` and JS `fetch()` send `Accept: */*` and got no rewriting at all.
+  Fix: include the literal string `*/*` in `monitoring.types` — it
+  satisfies the request-side gate for any browser/fetch/curl request, while
+  the response-side gate still filters on real `Content-Type` values, so
+  binary responses stay untouched.
+- `rewrite-body` handles gzip itself (decompresses, rewrites,
+  recompresses), verified byte-identical to an uncompressed fetch.
+- Plugins are Yaegi-interpreted **source**, version-pinned and fetched from
+  `plugins.traefik.io` at router startup — a much smaller trust gap than
+  the dynamically-compiled Caddy binary the earlier prototype used, though
+  still a runtime third-party fetch. If this were bundled, DDEV could
+  vendor the plugin source and load it as a Traefik
+  [local plugin](https://plugins.traefik.io/install) to remove the runtime
+  fetch entirely.
+
+## Variant 2: standalone Go proxy
 
 Insert a small rewriting proxy between the tunnel and the web container:
 
@@ -51,12 +110,11 @@ No database changes. No CMS-specific code — this operates purely on HTTP,
 so it works for any CMS with this problem, not just WordPress (verified
 against WordPress and TYPO3 so far — see Limitations).
 
-This was explored as an alternative to Traefik middleware: `ddev share`
-traffic doesn't currently touch Traefik at all, and getting body-rewriting
-into Traefik would mean a community plugin (Yaegi-interpreted, global
-router config affecting every project) plus a second plugin for `Location`
-headers. Scoping the rewrite to a single Go binary per share session avoids
-both of those, at the cost of not being a "the router did it" story.
+This variant was built first, before the router-based one, on the theory
+that a single stdlib-only binary per share session was simpler than
+getting community plugins into the router. Both concerns it was avoiding
+turned out manageable (see Variant 1), so it now mainly serves as the
+zero-third-party-code alternative.
 
 An earlier prototype used cloudflared → Caddy (with the third-party
 `replace-response` module, dynamically fetched from Caddy's build API at
@@ -66,8 +124,20 @@ binary — everything here is stdlib only.
 
 ## Status: proof of concept
 
-Verified end-to-end against a real WordPress project over a live
-`trycloudflare.com` tunnel:
+**Variant 1 (router-based)** verified end-to-end against the same
+WordPress project over a live `trycloudflare.com` tunnel:
+
+- Homepage, `/wp-json/` (still valid JSON afterward), and `/feed/` all came
+  back with zero leaked local-host references.
+- A `301` redirect's `Location` header was rewritten to the tunnel host.
+- Browser-style gzip requests came back gzip-encoded with content
+  byte-identical to an uncompressed fetch, zero leaks.
+- A static CSS asset passed through byte-identical to a direct local fetch.
+- `wp_options.siteurl` / `home` confirmed untouched; normal local routing
+  (`https://project.ddev.site`) unaffected while the share route was live.
+
+**Variant 2 (Go proxy)** verified end-to-end against a real WordPress
+project over a live `trycloudflare.com` tunnel:
 
 - Homepage, `/wp-json/` (JSON-escaped URLs), and `/feed/` (XML) all came
   back with zero leaked local-host references. `/wp-json/` and `/feed/`
@@ -77,8 +147,8 @@ Verified end-to-end against a real WordPress project over a live
 - `wp_options.siteurl` / `home` confirmed untouched before, during, and
   after — no database writes happen at any point.
 
-Also verified end-to-end against a fresh TYPO3 (v14, base distribution)
-project over a live `trycloudflare.com` tunnel:
+Variant 2 also verified end-to-end against a fresh TYPO3 (v14, base
+distribution) project over a live `trycloudflare.com` tunnel:
 
 - Homepage `<link rel="canonical">` and the TYPO3 backend login page
   (`/typo3/`) both came back with zero leaked local-host references.
@@ -99,8 +169,17 @@ project over a live `trycloudflare.com` tunnel:
   view/test-only, not an editing surface — same boundary the
   `wp search-replace` workaround has today.
 - WebSocket payloads are not rewritten.
-- Verified against WordPress and TYPO3 so far, both over cloudflared.
-  Magento 2 — the other CMS DDEV's own docs call out for this exact
+- Variant 1 only: responses to requests with no `Accept` header at all are
+  not rewritten (the `rewrite-body` plugin's request-side gate needs one;
+  browsers, `fetch()`, and curl always send it, so in practice this mostly
+  affects headless API clients).
+- Variant 1 only: if DDEV kills the provider script without SIGINT/SIGTERM
+  reaching it, the pushed route file can linger in the router until the
+  next share (the script removes stale files on startup, and a route for a
+  dead tunnel hostname is unreachable anyway).
+- Variant 1 has been tested against WordPress; Variant 2 against WordPress
+  and TYPO3. Both over cloudflared only.
+- Magento 2 — the other CMS DDEV's own docs call out for this exact
   problem — is still untested; it requires a Magento Marketplace account
   and Composer auth keys to install at all, which blocked testing it here.
 - Tunnel-agnostic in principle (ngrok forwards the public Host header by
@@ -108,10 +187,28 @@ project over a live `trycloudflare.com` tunnel:
   tested live.
 - No automated integration test yet — the results above were driven
   manually against a real project and a real tunnel.
-- Not yet wired up as a bundled DDEV share provider — currently a
-  standalone binary + a project-level `.ddev/share-providers/` script.
+- Not yet wired up as a bundled DDEV share provider — both variants are
+  currently project-level `.ddev/share-providers/` scripts.
 
 ## Usage
+
+### Variant 1: router-based
+
+One-time setup (plugins are Traefik static config):
+
+```bash
+cp traefik/static_config.share-rewrite.yaml ~/.ddev/traefik/
+ddev poweroff && ddev start
+```
+
+Then copy `share-providers/cloudflared-router.sh` into your project's
+`.ddev/share-providers/` and:
+
+```bash
+ddev share --provider=cloudflared-router
+```
+
+### Variant 2: standalone Go proxy
 
 ```bash
 go build -o ~/.ddev/bin/ddev-share-proxy .
@@ -126,10 +223,17 @@ ddev share --provider=cloudflared-rewrite
 
 ## Design questions for discussion
 
-- Should this be a distinctly-named provider (`cloudflared-rewrite`) or a
-  flag on the existing built-in providers?
-- Standalone companion binary (mirroring `cmd/ddev-hostname`) vs. a hidden
-  subcommand embedded in the `ddev` binary itself?
+- Which variant? Router-based keeps everything inside `ddev-router` with
+  no new binary, at the cost of two third-party Yaegi plugins (vendorable
+  as local plugins if bundled) and a required router restart when first
+  enabled. The Go proxy is stdlib-only and router-independent (works with
+  `router: none` projects) but is a new binary to build, ship, and
+  maintain.
+- Should this be a distinctly-named provider or a flag on the existing
+  built-in providers?
+- If the Go-proxy variant: standalone companion binary (mirroring
+  `cmd/ddev-hostname`) vs. a hidden subcommand embedded in the `ddev`
+  binary itself?
 - `ddev-get` addon first, or straight to a bundled provider in core, given
-  this reuses the existing share-provider extension point and needs no
-  other core changes?
+  both variants reuse the existing share-provider extension point and need
+  no core changes?

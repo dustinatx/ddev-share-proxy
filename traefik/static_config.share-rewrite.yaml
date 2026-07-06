@@ -1,0 +1,12 @@
+# Traefik plugins used by the cloudflared-router share provider
+# (see https://github.com/dustinatx/ddev-share-proxy — router-based variant).
+# Static config is only read at router startup, so after adding or changing
+# this file, run `ddev poweroff` and start a project again.
+experimental:
+  plugins:
+    rewrite-body:
+      moduleName: "github.com/packruler/rewrite-body"
+      version: "v1.2.0"
+    rewrite-headers:
+      moduleName: "github.com/XciD/traefik-plugin-rewrite-headers"
+      version: "v0.0.4"

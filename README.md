@@ -136,6 +136,22 @@ WordPress project over a live `trycloudflare.com` tunnel:
 - `wp_options.siteurl` / `home` confirmed untouched; normal local routing
   (`https://project.ddev.site`) unaffected while the share route was live.
 
+Variant 1 also verified end-to-end against the same TYPO3 (v14, base
+distribution) project used for Variant 2's TYPO3 test, over a live
+`trycloudflare.com` tunnel:
+
+- Homepage `<link rel="canonical">` and the TYPO3 backend login page
+  (`/typo3/`) both came back with zero leaked local-host references.
+- A browser-style gzip request came back gzip-encoded, byte-identical to an
+  uncompressed fetch once decompressed.
+- A static CSS asset passed through byte-identical to a direct local fetch.
+- The site's base URL (`config/sites/main/config.yaml`, set to
+  `https://project.ddev.site/`) confirmed untouched before, during, and
+  after; normal local routing unaffected while the share route was live.
+- Reproduced the documented provider-cleanup limitation below: killing
+  `ddev share` with `SIGTERM` stopped cloudflared but left the pushed route
+  file in the router, requiring manual removal.
+
 **Variant 2 (Go proxy)** verified end-to-end against a real WordPress
 project over a live `trycloudflare.com` tunnel:
 
@@ -177,8 +193,8 @@ distribution) project over a live `trycloudflare.com` tunnel:
   reaching it, the pushed route file can linger in the router until the
   next share (the script removes stale files on startup, and a route for a
   dead tunnel hostname is unreachable anyway).
-- Variant 1 has been tested against WordPress; Variant 2 against WordPress
-  and TYPO3. Both over cloudflared only.
+- Variant 1 and Variant 2 have both now been tested against WordPress and
+  TYPO3. Both over cloudflared only.
 - Magento 2 — the other CMS DDEV's own docs call out for this exact
   problem — is still untested; it requires a Magento Marketplace account
   and Composer auth keys to install at all, which blocked testing it here.
